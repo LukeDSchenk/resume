@@ -1,7 +1,41 @@
+// Transient mapping of intended URLs for newly created tabs (used for display until they load)
+const intendedUrlByTabId = new Map();
+
+// Debounce helper to prevent excessive refresh calls during rapid tab changes
+function debounce(fn, wait = 200) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), wait);
+  };
+}
+
+let suppressAutoRefresh = false;
+const debouncedRefresh = debounce(refreshUrls, 200);
+
+function scheduleAutoRefresh() {
+  if (!suppressAutoRefresh) debouncedRefresh();
+}
+
 async function getUrlsInCurrentWindow() {
   const tabs = await browser.tabs.query({ currentWindow: true });
   tabs.sort((a, b) => a.index - b.index);
-  const urls = tabs.map(t => t.url || "").filter(u => u !== "");
+
+  // Prefer real URL; if about:blank, try pendingUrl or the intended URL we recorded on creation.
+  const urls = tabs.map(t => {
+    let u = t.url || '';
+    if (!u || u === 'about:blank') {
+      // pendingUrl may exist on some Firefox versions; harmless to read if absent
+      const pending = t.pendingUrl;
+      if (pending && pending !== 'about:blank') {
+        u = pending;
+      } else if (intendedUrlByTabId.has(t.id)) {
+        u = intendedUrlByTabId.get(t.id);
+      }
+    }
+    return u;
+  }).filter(u => u !== '');
+
   return urls;
 }
 
@@ -48,10 +82,73 @@ async function copyToClipboard() {
   }
 }
 
+// Wait for a set of tab IDs to "settle": either finish loading or switch from about:blank.
+// Times out after timeoutMs per tab to avoid hanging.
+function waitForTabsToSettle(tabIds, timeoutMs = 6000) {
+  if (!tabIds || tabIds.length === 0) return Promise.resolve();
+
+  const waits = tabIds.map(id => new Promise(resolve => {
+    let done = false;
+
+    const cleanup = () => {
+      if (done) return;
+      done = true;
+      browser.tabs.onUpdated.removeListener(onUpdated);
+      browser.tabs.onRemoved.removeListener(onRemoved);
+      clearTimeout(timer);
+    };
+
+    const finishIfSettled = async () => {
+      try {
+        const tab = await browser.tabs.get(id);
+        const url = tab.url || '';
+        const settled = (url && url !== 'about:blank' && tab.status !== 'loading');
+        if (settled) {
+          cleanup();
+          resolve();
+        }
+      } catch {
+        // If tab is gone, consider it settled
+        cleanup();
+        resolve();
+      }
+    };
+
+    const onUpdated = (tabId, changeInfo, tab) => {
+      if (tabId !== id) return;
+      // Resolve on URL change away from about:blank or when status becomes 'complete'
+      if ((changeInfo.url && changeInfo.url !== 'about:blank') || changeInfo.status === 'complete') {
+        cleanup();
+        resolve();
+      }
+    };
+
+    const onRemoved = (tabId) => {
+      if (tabId === id) {
+        cleanup();
+        resolve();
+      }
+    };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, timeoutMs);
+
+    browser.tabs.onUpdated.addListener(onUpdated);
+    browser.tabs.onRemoved.addListener(onRemoved);
+    // Check current state in case it's already settled
+    finishIfSettled();
+  }));
+
+  return Promise.all(waits);
+}
+
 async function applyListToWindow() {
   const applyBtn = document.getElementById('applyBtn');
   applyBtn.disabled = true;
   applyBtn.textContent = 'Applying…';
+  suppressAutoRefresh = true;
 
   try {
     const ta = document.getElementById('urlList');
@@ -67,13 +164,13 @@ async function applyListToWindow() {
       if (!confirmEmpty) return;
     }
 
-    // Current window and tabs
+    // Current window
     const { id: windowId } = await browser.windows.getCurrent({ populate: false });
 
     let tabs = await browser.tabs.query({ currentWindow: true });
     tabs.sort((a, b) => a.index - b.index);
 
-    // Group existing by exact URL
+    // Group existing tabs by exact URL
     const buckets = new Map();
     for (const t of tabs) {
       const key = t.url || '';
@@ -81,6 +178,7 @@ async function applyListToWindow() {
       buckets.get(key).push(t);
     }
 
+    // Build plan
     const plan = [];
     const consumedIds = new Set();
     for (const url of desired) {
@@ -96,7 +194,7 @@ async function applyListToWindow() {
 
     const toClose = tabs.filter(t => !consumedIds.has(t.id));
 
-    // Quick estimate for confirmation
+    // Quick estimate (for confirmation)
     const currentOrderExisting = tabs.filter(t => consumedIds.has(t.id)).map(t => t.id);
     const desiredOrderExisting = plan.filter(x => x.type === 'existing').map(x => x.tabId);
     let reorderCount = 0;
@@ -122,16 +220,20 @@ async function applyListToWindow() {
     tabs = await browser.tabs.query({ currentWindow: true });
     tabs.sort((a, b) => a.index - b.index);
 
-    // 2) Create missing tabs (at end)
+    // 2) Create missing tabs (track created IDs and intended URLs)
+    const createdIds = [];
     for (let i = 0; i < plan.length; i++) {
       if (plan[i].type === 'new') {
         try {
+          const targetUrl = plan[i].url;
           const created = await browser.tabs.create({
             windowId,
-            url: plan[i].url,
+            url: targetUrl,
             active: false
           });
-          plan[i] = { type: 'existing', tabId: created.id, url: plan[i].url };
+          plan[i] = { type: 'existing', tabId: created.id, url: targetUrl };
+          createdIds.push(created.id);
+          intendedUrlByTabId.set(created.id, targetUrl);
         } catch (e) {
           console.warn('Failed to create tab for URL:', plan[i].url, e);
           toast(`Could not open: ${plan[i].url}`);
@@ -151,15 +253,19 @@ async function applyListToWindow() {
       }
     }
 
+    // 4) Wait for newly created tabs to settle so we don't display about:blank
+    await waitForTabsToSettle(createdIds, 6000);
+
+    // Done. Update once after stabilization.
     await refreshUrls();
     toast('Applied changes');
   } catch (err) {
     console.error('Apply failed', err);
     toast('Failed to apply changes (see console)');
   } finally {
-    const applyBtn2 = document.getElementById('applyBtn');
-    applyBtn2.disabled = false;
-    applyBtn2.textContent = 'Apply';
+    suppressAutoRefresh = false;
+    applyBtn.disabled = false;
+    applyBtn.textContent = 'Apply';
   }
 }
 
@@ -188,7 +294,38 @@ function toast(msg) {
   toastTimeout = setTimeout(() => { el.style.opacity = '0'; }, 1400);
 }
 
-document.getElementById('refreshBtn').addEventListener('click', refreshUrls);
+// Event: as soon as a tab navigates off about:blank, drop its intended mapping
+browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (intendedUrlByTabId.has(tabId)) {
+    const real = tab?.url || changeInfo.url;
+    if (real && real !== 'about:blank') {
+      intendedUrlByTabId.delete(tabId);
+    }
+  }
+});
+
+// Auto-refresh: update textarea on tab changes (debounced)
+browser.tabs.onCreated.addListener(scheduleAutoRefresh);
+browser.tabs.onRemoved.addListener(scheduleAutoRefresh);
+browser.tabs.onMoved.addListener(scheduleAutoRefresh);
+browser.tabs.onAttached.addListener(scheduleAutoRefresh);
+browser.tabs.onDetached.addListener(scheduleAutoRefresh);
+browser.tabs.onReplaced.addListener(scheduleAutoRefresh);
+browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  // Update on URL changes, load state changes, pin/discard/index/title changes
+  if (
+    changeInfo.url !== undefined ||
+    changeInfo.status !== undefined ||
+    changeInfo.pinned !== undefined ||
+    changeInfo.discarded !== undefined ||
+    changeInfo.index !== undefined ||
+    changeInfo.title !== undefined
+  ) {
+    scheduleAutoRefresh();
+  }
+});
+
+// UI wiring
 document.getElementById('copyBtn').addEventListener('click', copyToClipboard);
 document.getElementById('applyBtn').addEventListener('click', applyListToWindow);
 
@@ -197,5 +334,5 @@ const ta = document.getElementById('urlList');
 ta.addEventListener('input', () => autosizeTextarea(ta));
 window.addEventListener('resize', () => autosizeTextarea(ta));
 
-// Populate on open
+// Initial populate
 refreshUrls();
