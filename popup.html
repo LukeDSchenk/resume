@@ -12,13 +12,17 @@
       <button id="refreshBtn" title="Refresh the URL list">Refresh</button>
       <button id="copyBtn" title="Copy to clipboard">Copy</button>
       <button id="saveBtn" title="Save as .txt">Save</button>
+      <button id="applyBtn" title="Apply this list to the current window">Apply</button>
     </div>
   </header>
 
-  <textarea id="urlList" spellcheck="false" aria-label="URLs in current window"></textarea>
+  <textarea id="urlList" spellcheck="false" aria-label="URLs in current window, one per line"></textarea>
 
   <footer>
-    <small>Shows URLs from the current window in tab order.</small>
+    <small>
+      Edit the list (one URL per line), then press Apply to make this window match.
+      Existing tabs are moved (not reloaded); new URLs are opened; extras are closed.
+    </small>
   </footer>
 
   <script type="module" src="popup.js"></script>

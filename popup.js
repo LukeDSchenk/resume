@@ -12,13 +12,10 @@ function fillTextarea(urls) {
 }
 
 function autosizeTextarea(ta) {
-  // Grow the textarea to fit content, up to 70% of popup viewport height
   const max = Math.floor(window.innerHeight * 0.7);
-  ta.style.height = 'auto'; // reset to measure true scrollHeight
+  ta.style.height = 'auto';
   const desired = Math.min(ta.scrollHeight, Math.max(120, max));
   ta.style.height = desired + 'px';
-
-  // Only show scrollbar if content exceeds our cap
   ta.style.overflowY = (ta.scrollHeight > desired) ? 'auto' : 'hidden';
 }
 
@@ -66,6 +63,134 @@ function saveToFile() {
   toast('Saved .txt file');
 }
 
+async function applyListToWindow() {
+  const applyBtn = document.getElementById('applyBtn');
+  applyBtn.disabled = true;
+  applyBtn.textContent = 'Applying…';
+
+  try {
+    const ta = document.getElementById('urlList');
+    const desired = ta.value
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l.length > 0);
+
+    // Safety prompt for empty list (which would close all tabs)
+    if (desired.length === 0) {
+      const confirmEmpty = confirm(
+        'The list is empty. Applying will close all tabs in this window. Continue?'
+      );
+      if (!confirmEmpty) {
+        return;
+      }
+    }
+
+    // Current window and tabs
+    const [win] = await browser.windows.getAll({ windowTypes: ['normal'], populate: false, windowId: browser.windows.WINDOW_ID_CURRENT })
+      .catch(async () => [await browser.windows.getCurrent()]);
+    const windowId = win?.id ?? (await browser.windows.getCurrent()).id;
+
+    let tabs = await browser.tabs.query({ currentWindow: true });
+    tabs.sort((a, b) => a.index - b.index);
+
+    // Build buckets of existing tabs by exact URL (no reloads for exact matches)
+    const buckets = new Map(); // url -> array of tabs (in current order)
+    for (const t of tabs) {
+      const key = t.url || '';
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(t);
+    }
+
+    // Plan: for each desired URL, use an existing tab if available; otherwise mark for creation.
+    const plan = []; // [{type:'existing', tabId, url}, {type:'new', url}]
+    const consumedIds = new Set();
+    for (const url of desired) {
+      const q = buckets.get(url);
+      if (q && q.length > 0) {
+        const tab = q.shift();
+        plan.push({ type: 'existing', tabId: tab.id, url });
+        consumedIds.add(tab.id);
+      } else {
+        plan.push({ type: 'new', url });
+      }
+    }
+
+    // Tabs not consumed will be closed
+    const toClose = tabs.filter(t => !consumedIds.has(t.id));
+
+    // Quick summary and confirmation
+    const currentOrderExisting = tabs.filter(t => consumedIds.has(t.id)).map(t => t.id);
+    const desiredOrderExisting = plan.filter(x => x.type === 'existing').map(x => x.tabId);
+    let reorderCount = 0;
+    const len = Math.min(currentOrderExisting.length, desiredOrderExisting.length);
+    for (let i = 0; i < len; i++) {
+      if (currentOrderExisting[i] !== desiredOrderExisting[i]) reorderCount++;
+    }
+    const openCount = plan.filter(x => x.type === 'new').length;
+    const closeCount = toClose.length;
+
+    const msg = `Apply changes to this window?\n\n` +
+      `Open: ${openCount}\n` +
+      `Close: ${closeCount}\n` +
+      `Reorder (move without reload): ~${reorderCount}`;
+    if (!confirm(msg)) {
+      return;
+    }
+
+    // 1) Close extras
+    if (toClose.length > 0) {
+      // Use settled to ignore any failures (e.g., protected tabs)
+      await Promise.allSettled(toClose.map(t => browser.tabs.remove(t.id)));
+    }
+
+    // Refresh tabs list after closes (indexes change)
+    tabs = await browser.tabs.query({ currentWindow: true });
+    tabs.sort((a, b) => a.index - b.index);
+
+    // 2) Create missing tabs (create at end; we'll reorder next)
+    for (let i = 0; i < plan.length; i++) {
+      if (plan[i].type === 'new') {
+        try {
+          const created = await browser.tabs.create({
+            windowId,
+            url: plan[i].url,
+            active: false
+          });
+          plan[i] = { type: 'existing', tabId: created.id, url: plan[i].url };
+        } catch (e) {
+          console.warn('Failed to create tab for URL:', plan[i].url, e);
+          toast(`Could not open: ${plan[i].url}`);
+          // Remove failed item from plan so ordering continues sensibly
+          plan.splice(i, 1);
+          i--;
+        }
+      }
+    }
+
+    // 3) Reorder all kept/created tabs to match plan
+    const finalIds = plan.map(x => x.tabId);
+    // Move tabs left-to-right into their target positions; moving doesn't reload
+    for (let i = 0; i < finalIds.length; i++) {
+      try {
+        await browser.tabs.move(finalIds[i], { index: i });
+      } catch (e) {
+        console.warn('Move failed for tab', finalIds[i], e);
+      }
+    }
+
+    // Done. Refresh textarea to reflect final state.
+    await refreshUrls();
+    toast('Applied changes');
+  } catch (err) {
+    console.error('Apply failed', err);
+    toast('Failed to apply changes (see console)');
+  } finally {
+    const applyBtn2 = document.getElementById('applyBtn');
+    applyBtn2.disabled = false;
+    applyBtn2.textContent = 'Apply';
+  }
+}
+
 let toastTimeout;
 function toast(msg) {
   clearTimeout(toastTimeout);
@@ -88,17 +213,18 @@ function toast(msg) {
   }
   el.textContent = msg;
   el.style.opacity = '1';
-  toastTimeout = setTimeout(() => { el.style.opacity = '0'; }, 1200);
+  toastTimeout = setTimeout(() => { el.style.opacity = '0'; }, 1400);
 }
 
 document.getElementById('refreshBtn').addEventListener('click', refreshUrls);
 document.getElementById('copyBtn').addEventListener('click', copyToClipboard);
 document.getElementById('saveBtn').addEventListener('click', saveToFile);
+document.getElementById('applyBtn').addEventListener('click', applyListToWindow);
 
 // Autosize as the user edits and when the popup resizes
 const ta = document.getElementById('urlList');
 ta.addEventListener('input', () => autosizeTextarea(ta));
 window.addEventListener('resize', () => autosizeTextarea(ta));
 
-// Populate on open and size once content is set
+// Populate on open
 refreshUrls();
