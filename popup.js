@@ -48,21 +48,6 @@ async function copyToClipboard() {
   }
 }
 
-function saveToFile() {
-  const content = document.getElementById('urlList').value;
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  a.href = url;
-  a.download = `resume-${timestamp}.txt`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  toast('Saved .txt file');
-}
-
 async function applyListToWindow() {
   const applyBtn = document.getElementById('applyBtn');
   applyBtn.disabled = true;
@@ -82,13 +67,14 @@ async function applyListToWindow() {
       if (!confirmEmpty) return;
     }
 
-    // Current window and tabs (fixed)
+    // Current window and tabs
     const { id: windowId } = await browser.windows.getCurrent({ populate: false });
 
     let tabs = await browser.tabs.query({ currentWindow: true });
     tabs.sort((a, b) => a.index - b.index);
 
-    const buckets = new Map(); // url -> array of tabs
+    // Group existing by exact URL
+    const buckets = new Map();
     for (const t of tabs) {
       const key = t.url || '';
       if (!buckets.has(key)) buckets.set(key, []);
@@ -110,6 +96,7 @@ async function applyListToWindow() {
 
     const toClose = tabs.filter(t => !consumedIds.has(t.id));
 
+    // Quick estimate for confirmation
     const currentOrderExisting = tabs.filter(t => consumedIds.has(t.id)).map(t => t.id);
     const desiredOrderExisting = plan.filter(x => x.type === 'existing').map(x => x.tabId);
     let reorderCount = 0;
@@ -135,7 +122,7 @@ async function applyListToWindow() {
     tabs = await browser.tabs.query({ currentWindow: true });
     tabs.sort((a, b) => a.index - b.index);
 
-    // 2) Create missing tabs
+    // 2) Create missing tabs (at end)
     for (let i = 0; i < plan.length; i++) {
       if (plan[i].type === 'new') {
         try {
@@ -154,7 +141,7 @@ async function applyListToWindow() {
       }
     }
 
-    // 3) Reorder to match plan
+    // 3) Reorder to match plan (moves do not reload)
     const finalIds = plan.map(x => x.tabId);
     for (let i = 0; i < finalIds.length; i++) {
       try {
@@ -203,7 +190,6 @@ function toast(msg) {
 
 document.getElementById('refreshBtn').addEventListener('click', refreshUrls);
 document.getElementById('copyBtn').addEventListener('click', copyToClipboard);
-document.getElementById('saveBtn').addEventListener('click', saveToFile);
 document.getElementById('applyBtn').addEventListener('click', applyListToWindow);
 
 // Autosize as the user edits and when the popup resizes

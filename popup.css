@@ -60,6 +60,21 @@ button:hover {
   background: var(--hover);
 }
 
+/* Icon button styling */
+.icon-btn {
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  color: var(--fg);
+}
+
 #urlList {
   width: calc(100% - 20px);
   /* Removed fixed height; we autosize with JS */
