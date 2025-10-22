@@ -1,11 +1,6 @@
 async function getUrlsInCurrentWindow() {
-  // Query tabs in the current window. Firefox returns them in tab order.
   const tabs = await browser.tabs.query({ currentWindow: true });
-
-  // Defensive sort by index in case any environment returns out-of-order results
   tabs.sort((a, b) => a.index - b.index);
-
-  // Map to URLs; keep everything including about: pages per your request
   const urls = tabs.map(t => t.url || "").filter(u => u !== "");
   return urls;
 }
@@ -13,6 +8,18 @@ async function getUrlsInCurrentWindow() {
 function fillTextarea(urls) {
   const ta = document.getElementById('urlList');
   ta.value = urls.join('\n');
+  autosizeTextarea(ta);
+}
+
+function autosizeTextarea(ta) {
+  // Grow the textarea to fit content, up to 70% of popup viewport height
+  const max = Math.floor(window.innerHeight * 0.7);
+  ta.style.height = 'auto'; // reset to measure true scrollHeight
+  const desired = Math.min(ta.scrollHeight, Math.max(120, max));
+  ta.style.height = desired + 'px';
+
+  // Only show scrollbar if content exceeds our cap
+  ta.style.overflowY = (ta.scrollHeight > desired) ? 'auto' : 'hidden';
 }
 
 async function refreshUrls() {
@@ -23,6 +30,7 @@ async function refreshUrls() {
     console.error('Failed to fetch tabs', err);
     const ta = document.getElementById('urlList');
     ta.value = `Error fetching URLs:\n${String(err)}`;
+    autosizeTextarea(ta);
   }
 }
 
@@ -35,7 +43,6 @@ async function copyToClipboard() {
     await navigator.clipboard.writeText(ta.value);
     toast('Copied to clipboard');
   } catch {
-    // Fallback for environments where Clipboard API might be restricted
     document.execCommand('copy');
     toast('Copied to clipboard');
   } finally {
@@ -88,5 +95,10 @@ document.getElementById('refreshBtn').addEventListener('click', refreshUrls);
 document.getElementById('copyBtn').addEventListener('click', copyToClipboard);
 document.getElementById('saveBtn').addEventListener('click', saveToFile);
 
-// Populate on open
+// Autosize as the user edits and when the popup resizes
+const ta = document.getElementById('urlList');
+ta.addEventListener('input', () => autosizeTextarea(ta));
+window.addEventListener('resize', () => autosizeTextarea(ta));
+
+// Populate on open and size once content is set
 refreshUrls();
