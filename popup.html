@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Resume</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>Resume</h1>
+    <div class="actions">
+      <button id="refreshBtn" title="Refresh the URL list">Refresh</button>
+      <button id="copyBtn" title="Copy to clipboard">Copy</button>
+      <button id="saveBtn" title="Save as .txt">Save</button>
+    </div>
+  </header>
+
+  <textarea id="urlList" spellcheck="false" aria-label="URLs in current window"></textarea>
+
+  <footer>
+    <small>Shows URLs from the current window in tab order.</small>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

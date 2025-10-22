@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Resume",
+  "version": "1.0.0",
+  "description": "Show a text list of all URLs in the current window, in tab order.",
+  "action": {
+    "default_title": "Resume",
+    "default_popup": "popup.html"
+  },
+  "permissions": ["tabs"],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
