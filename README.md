@@ -2,6 +2,8 @@
 
 A really simple way to manage browsing sessions via text files.
 
+This project was created with [Goose](https://github.com/block/goose), using OpenAI's GPT-5 as a backend. You can see the inputs that were given in the included file `resume.jsonl`.
+
 ## How to load in Firefox (Temporary Add-on)
 
 1. Open Firefox and navigate to: about:debugging#/runtime/this-firefox
