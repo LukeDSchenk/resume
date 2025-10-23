@@ -1,6 +1,6 @@
 # Resume
 
-A really simple way to stop browsing sessions and pick them up later.
+A really simple way to manage browsing sessions via text files.
 
 ## How to load in Firefox (Temporary Add-on)
 
