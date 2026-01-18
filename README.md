@@ -1,6 +1,6 @@
 # Resume
 
-A really simple way to manage browsing sessions via text files.
+A really simple tab manager.
 
 This project was created with [Goose](https://github.com/block/goose), using OpenAI's GPT-5 as a backend. You can see the inputs that were given in the included file `resume.jsonl`.
 
