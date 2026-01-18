@@ -13,6 +13,8 @@ mkdir -p ./release
 # zip -r release/$VERSION.zip ./ -x `cat exclusions.txt`
 # rm exclusions.txt
 
-git archive --format=zip -o release/resume_$VERSION.zip HEAD
+OUT=release/resume_$VERSION.zip
+git archive --format=zip -o $OUT HEAD
+sha256sum $OUT 
 
 # For now, just go manually fix the archive. Boo. Apple is annoying. Now I am using a mac just for one program. That's no good.
